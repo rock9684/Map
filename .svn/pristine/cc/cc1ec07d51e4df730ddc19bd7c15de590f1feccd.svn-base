@@ -1,0 +1,176 @@
+#include <vector>
+#include <ctime>
+#include <cmath>
+#include <sys/time.h>
+#include <algorithm>
+#include "m3.h"
+#include "m4.h"
+#include <signal.h>
+#include <unistd.h>
+typedef void (*sighandler_t)(int);
+using namespace std;
+
+
+bool noSolution = 0;
+//To terminate the function
+bool termination = 0;
+//Stored the cost between any pair of points 
+double cost[200][200];
+//Follow the sequence of all pick-up points, all drop-off points and all depots
+vector<unsigned> input;
+
+
+
+
+//To find the solution as good as possible of the post-man problem within 30 seconds
+//The algorithm used here is simulated annealing
+std::vector<unsigned> traveling_courier(const std::vector<DeliveryInfo>& deliveries, const std::vector<unsigned>& depots){
+    clock_t initial_t = clock();
+    signal(SIGALRM, terminate_and_return);    
+    alarm(29);
+    unsigned N = deliveries.size();
+    unsigned M = depots.size();
+    unsigned number_of_points = N * 2 + M;
+    
+    for(unsigned i = 0; i < number_of_points; i ++){
+        if (i < N)
+            input.push_back(deliveries[i].pickUp);
+        else if (i < 2 * N)
+            input.push_back(deliveries[i].dropOff);
+        else
+            input.push_back(depots[i]);
+    }
+  
+    //Call cost_function here to initialize 2-dimensional array cost
+    vector<unsigned> optimal_found;
+    vector<unsigned> solution;
+    //Initialize first solution
+    
+    
+    //total_cost(cost, input);
+}
+
+bool failure = false;
+//Probability function
+//T stands for temperature, which should be related to time already consumed
+//The math expression used is p = e^((old_cost - new_cost)/T)
+double p_func(double old_cost, double new_cost, double T){
+    double temp = (old_cost - new_cost) / T;
+    double P;
+    //Taylor series of e^temp
+    P = 1 + temp/1 + temp * temp / 2 + temp * temp * temp / 6 + temp * temp * temp * temp / 24 + temp * temp * temp * temp * temp / 120 + 
+            temp * temp * temp * temp * temp * temp / 720;
+    return P;
+}
+
+void total_cost(double cost[200][200], vector<unsigned> deliveries) {
+    for (int i = 0; i < deliveries.size(); i++) {
+        unsigned intersection = deliveries[i];
+        vector<unsigned> temp = deliveries;
+        int count_failure = 0;
+        while (!temp.empty()) {
+
+            //Dijkstra starts here
+            priority_queue<pair<double, unsigned>, vector<pair<double, unsigned>>, greater<pair<double, unsigned>>> path;
+            unordered_map<unsigned, node> openSet; //Nodes visited but not expanded
+            unordered_map<unsigned, node> closedSet; //Nodes already expanded
+
+            //Initialize all structures
+            node start(intersection, 0);
+            openSet.emplace(intersection, start);
+            path.emplace(start.travelTime, intersection);
+
+            //When open set is not empty
+            while (!openSet.empty()) {
+                //If already expanded, skip
+                if (closedSet.find(path.top().second) != closedSet.end()) {
+                    path.pop();
+                    continue;
+                }
+                //Store useful data
+
+                unsigned intersectID = path.top().second;
+                node current = openSet.find(intersectID)->second;
+                //Update all structures
+                path.pop();
+                openSet.erase(intersectID);
+                closedSet.emplace(intersectID, current);
+
+                //If found
+                if (find(temp.begin(), temp.end(), intersectID) != temp.end()) {
+                    int j = distance(deliveries.begin(), find(deliveries.begin(), deliveries.end(), intersectID));
+                    cost[i][j] = current.travelTime;
+                    temp.erase(find(temp.begin(), temp.end(), intersectID));
+                    break;
+                }
+                //Expansion
+                for (unsigned i = 0; i < getIntersectionStreetSegmentCount(intersectID); i++) {
+                    StreetSegmentInfo info = getStreetSegmentInfo(getIntersectionStreetSegment(intersectID, i));
+                    unsigned tempSegment = getIntersectionStreetSegment(intersectID, i);
+                    //Chick path legality
+                    if (intersectID == info.from) {
+                        unsigned next = info.to;
+                        node temp(intersectID, tempSegment);
+                        temp.travelTime += current.travelTime;
+                        if (getStreetSegmentInfo(current.fromSegment).streetID != getStreetSegmentInfo(temp.fromSegment).streetID)
+                            temp.travelTime += 0.25;
+                        //If the target is already expanded or current time is not less than time stored in the target, skip
+                        if (closedSet.find(next) != closedSet.end())
+                            continue;
+                        else if (openSet.find(next) != openSet.end() && openSet.find(next)->second.travelTime < temp.travelTime)
+                            continue;
+                        //The best till now, store
+                        openSet.erase(next);
+                        openSet.emplace(next, temp);
+                        path.emplace(temp.travelTime, next);
+                    } else if (!info.oneWay) {
+                        unsigned next = info.from;
+                        node temp(intersectID, tempSegment);
+                        temp.travelTime += current.travelTime;
+                        if (getStreetSegmentInfo(current.fromSegment).streetID != getStreetSegmentInfo(temp.fromSegment).streetID)
+                            temp.travelTime += 0.25;
+                        if (closedSet.find(next) != closedSet.end())
+                            continue;
+                        else if (openSet.find(next) != openSet.end() && openSet.find(next)->second.travelTime < temp.travelTime)
+                            continue;
+                        openSet.erase(next);
+                        openSet.emplace(next, temp);
+                        path.emplace(temp.travelTime, next);
+                    }
+                }
+            }
+            //If not found
+            if (openSet.empty()) {
+                count_failure++;
+            }
+            if (temp.size() == count_failure){
+                for(int j = 0; j < temp.size(); j++){
+                    int k = distance(deliveries.begin(), find(deliveries.begin(), deliveries.end(), temp[j]));
+                    cost[i][k] = -1;
+                }
+                break;
+            }
+                
+        }
+    }
+}
+
+//To set the flag when alarm signal is sent
+void terminate_and_return(int dum){
+    termination = 1;
+}
+
+//To find cost of a sequence of intersection ids
+double find_cost(vector<unsigned> _input){
+    double _cost = 0;
+    for(unsigned i = 0; i < _input.size() - 1; i++){
+        int position1 = distance(input.begin(), find(input.begin(), input.end(), _input[i]));
+        int position2 = distance(input.begin(), find(input.begin(), input.end(), _input[i + 1]));
+        //If the path is illegal
+        if(cost[position1][position2] < 0)
+            return -1;
+        //Accumulate the cost
+        _cost += cost[position1][position2];
+    }
+    return _cost;
+}

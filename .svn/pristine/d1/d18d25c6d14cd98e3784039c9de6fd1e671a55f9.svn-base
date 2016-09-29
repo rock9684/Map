@@ -1,0 +1,27 @@
+#include <vector>
+#include <ctime>
+#include <cmath>
+#include "m4.h"
+
+
+
+
+
+//To find the solution as good as possible of the post-man problem within 30 seconds
+//The algorithm used here is simulated annealing
+std::vector<unsigned> traveling_courier(const std::vector<DeliveryInfo>& deliveries, const std::vector<unsigned>& depots){
+    
+}
+
+
+//Probability function
+//T stands for temperature, which should be related to time already consumed
+//The math expression used is p = e^((old_cost - new_cost)/T)
+double p_func(double old_cost, double new_cost, double T){
+    double temp = (old_cost - new_cost) / T;
+    double P;
+    //Taylor series of e^temp
+    P = 1 + temp/1 + temp * temp / 2 + temp * temp * temp / 6 + temp * temp * temp * temp / 24 + temp * temp * temp * temp * temp / 120 + 
+            temp * temp * temp * temp * temp * temp / 720;
+    return P;
+}

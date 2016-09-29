@@ -1,0 +1,228 @@
+#include "m3.h"
+#include "StreetsDatabaseAPI.h"
+#include "algorithm"
+#include <vector>
+#include <string>
+#include "m1.h"
+#include <queue>
+#include <map>
+#include <unordered_map>
+#include <sstream>
+using namespace std;
+
+extern vector<LatLon> ld_point_of_interest_posiion;
+extern vector<LatLon> ld_intersection_position;
+extern int PointOfInterestID;
+extern vector<string> best_path_text_form;
+// Returns a path (route) between the start intersection and the end 
+// intersection, if one exists. If no path exists, this routine returns 
+// an empty (size == 0) vector. If more than one path exists, the path 
+// with the shortest travel time is returned. The path is returned as a vector 
+// of street segment ids; traversing these street segments, in the given order,
+// would take one from the start to the end intersection.
+
+
+node::node(){
+    
+}
+node::node(unsigned node, unsigned segment, unsigned start, unsigned goal){
+    fromNode = node;
+    fromSegment = segment;
+    travelTime = find_street_segment_travel_time(segment);
+    projectedTime = find_distance_between_two_points(ld_intersection_position[start], ld_intersection_position[goal])/1000/120*60;
+}
+
+node::node(unsigned node, unsigned segment){
+    fromNode = node;
+    fromSegment = segment;
+    travelTime = find_street_segment_travel_time(segment);
+    projectedTime = 0;
+}
+
+
+//A* algorithm
+std::vector<unsigned> find_path_between_intersections(unsigned intersect_id_start, unsigned intersect_id_end){
+    priority_queue<pair<double, unsigned>, vector<pair<double, unsigned>>, greater<pair<double, unsigned>>> path;
+    unordered_map<unsigned, node> openSet; //Nodes visited but not expanded
+    unordered_map<unsigned, node> closedSet; //Nodes already expanded
+    
+    //Initialize all structures
+    node start(intersect_id_start, 0, intersect_id_start, intersect_id_end);
+    openSet.emplace(intersect_id_start, start);
+    path.emplace(start.travelTime+start.projectedTime, intersect_id_start);
+    
+    //When open set is not empty
+    while(!openSet.empty()){
+        //If already expanded, skip
+        if(closedSet.find(path.top().second) != closedSet.end()){
+            path.pop();
+            continue;
+        }
+        //Store useful data
+        
+        unsigned intersectID = path.top().second;
+        node current = openSet.find(intersectID)->second;
+        //Update all structures
+        path.pop();
+        openSet.erase(intersectID);
+        closedSet.emplace(intersectID, current);
+        
+        //If found
+        if(intersectID == intersect_id_end){
+            vector<unsigned> finalPath;
+            //Get the reverse path
+            for(auto iter = closedSet.find(intersectID); iter != closedSet.find(intersect_id_start); iter = closedSet.find(iter->second.fromNode))
+                finalPath.push_back(iter->second.fromSegment);
+            reverse(finalPath.begin(), finalPath.end());
+            return finalPath;
+        }
+        //Expansion
+        for(unsigned i = 0; i < getIntersectionStreetSegmentCount(intersectID); i++){
+            StreetSegmentInfo info = getStreetSegmentInfo(getIntersectionStreetSegment(intersectID, i));
+            unsigned tempSegment = getIntersectionStreetSegment(intersectID, i);
+            //Chick path legality
+            if(intersectID == info.from){
+                unsigned next = info.to;
+                node temp(intersectID, tempSegment, next, intersect_id_end);
+                temp.travelTime += current.travelTime;
+                if(getStreetSegmentInfo(current.fromSegment).streetID != getStreetSegmentInfo(temp.fromSegment).streetID)
+                    temp.travelTime += 0.25;
+                //If the target is already expanded or current time is not less than time stored in the target, skip
+                if(closedSet.find(next) != closedSet.end())
+                    continue;
+                else if(openSet.find(next)!=openSet.end() && openSet.find(next)->second.travelTime < temp.travelTime)
+                    continue;
+                //The best till now, store
+                openSet.erase(next);
+                openSet.emplace(next, temp);
+                path.emplace(temp.travelTime + temp.projectedTime, next);
+            }else if(!info.oneWay){
+                unsigned next = info.from;
+                node temp(intersectID, tempSegment, next, intersect_id_end);
+                temp.travelTime += current.travelTime;
+                if(getStreetSegmentInfo(current.fromSegment).streetID != getStreetSegmentInfo(temp.fromSegment).streetID)
+                    temp.travelTime += 0.25;
+                if(closedSet.find(next) != closedSet.end())
+                    continue;
+                else if(openSet.find(next)!=openSet.end() && openSet.find(next)->second.travelTime < temp.travelTime)
+                    continue;
+                openSet.erase(next);
+                openSet.emplace(next, temp);
+                path.emplace(temp.travelTime + temp.projectedTime, next);
+            }
+        }
+    }
+    //If not found
+    vector<unsigned> failure;
+    return failure;
+}
+// Returns the time required to travel along the path specified. The path
+// is passed in as a vector of street segment ids, and this function can 
+// assume the vector either forms a legal path or has size == 0.
+// The travel time is the sum of the length/speed-limit of each street 
+// segment, plus 15 seconds per turn implied by the path. A turn occurs
+// when two consecutive street segments have different street names.
+double compute_path_travel_time(const std::vector<unsigned>& path){
+    if(path.size() == 0) //empty vector
+        return 0;
+    double time_tot = 0;
+    unsigned i = 0;
+    for(; i + 1 < path.size(); i++){
+        time_tot += find_street_segment_travel_time(path[i]);
+        if(getStreetSegmentInfo(path[i]).streetID != getStreetSegmentInfo(path[i + 1]).streetID)
+            time_tot += 0.25;
+    }
+    time_tot += find_street_segment_travel_time(path[i]);
+    return time_tot;
+}
+
+
+// Returns the shortest travel time path (vector of street segments) from 
+// the start intersection to a point of interest with the specified name.
+// If no such path exists, returns an empty (size == 0) vector.
+// Dijkstra algorithm
+std::vector<unsigned> find_path_to_point_of_interest (unsigned intersect_id_start, std::string point_of_interest_name){
+    //Get a vector of closest intersection of each POI
+    unordered_map<unsigned, unsigned> closestIntersections;
+    for(int i = 0; i < PointOfInterestID; i ++)
+        if(getPointOfInterestName(i) == point_of_interest_name)
+            closestIntersections.emplace(find_closest_intersection(ld_point_of_interest_posiion[i]), 0);
+    
+    //Dijkstra starts here
+    priority_queue<pair<double, unsigned>, vector<pair<double, unsigned>>, greater<pair<double, unsigned>>> path;
+    unordered_map<unsigned, node> openSet; //Nodes visited but not expanded
+    unordered_map<unsigned, node> closedSet; //Nodes already expanded
+    
+    //Initialize all structures
+    node start(intersect_id_start, 0);
+    openSet.emplace(intersect_id_start, start);
+    path.emplace(start.travelTime, intersect_id_start);
+    
+    //When open set is not empty
+    while(!openSet.empty()){
+        //If already expanded, skip
+        if(closedSet.find(path.top().second) != closedSet.end()){
+            path.pop();
+            continue;
+        }
+        //Store useful data
+        
+        unsigned intersectID = path.top().second;
+        node current = openSet.find(intersectID)->second;
+        //Update all structures
+        path.pop();
+        openSet.erase(intersectID);
+        closedSet.emplace(intersectID, current);
+        
+        //If found
+        if(closestIntersections.find(intersectID) != closestIntersections.end()){
+            vector<unsigned> finalPath;
+            //Get the reverse path
+            for(auto iter = closedSet.find(intersectID); iter != closedSet.find(intersect_id_start); iter = closedSet.find(iter->second.fromNode))
+                finalPath.push_back(iter->second.fromSegment);
+            reverse(finalPath.begin(), finalPath.end());
+            return finalPath;
+        }
+        //Expansion
+        for(unsigned i = 0; i < getIntersectionStreetSegmentCount(intersectID); i++){
+            StreetSegmentInfo info = getStreetSegmentInfo(getIntersectionStreetSegment(intersectID, i));
+            unsigned tempSegment = getIntersectionStreetSegment(intersectID, i);
+            //Chick path legality
+            if(intersectID == info.from){
+                unsigned next = info.to;
+                node temp(intersectID, tempSegment);
+                temp.travelTime += current.travelTime;
+                if(getStreetSegmentInfo(current.fromSegment).streetID != getStreetSegmentInfo(temp.fromSegment).streetID)
+                    temp.travelTime += 0.25;
+                //If the target is already expanded or current time is not less than time stored in the target, skip
+                if(closedSet.find(next) != closedSet.end())
+                    continue;
+                else if(openSet.find(next)!=openSet.end() && openSet.find(next)->second.travelTime < temp.travelTime)
+                    continue;
+                //The best till now, store
+                openSet.erase(next);
+                openSet.emplace(next, temp);
+                path.emplace(temp.travelTime, next);
+            }else if(!info.oneWay){
+                unsigned next = info.from;
+                node temp(intersectID, tempSegment);
+                temp.travelTime += current.travelTime;
+                if(getStreetSegmentInfo(current.fromSegment).streetID != getStreetSegmentInfo(temp.fromSegment).streetID)
+                    temp.travelTime += 0.25;
+                if(closedSet.find(next) != closedSet.end())
+                    continue;
+                else if(openSet.find(next)!=openSet.end() && openSet.find(next)->second.travelTime < temp.travelTime)
+                    continue;
+                openSet.erase(next);
+                openSet.emplace(next, temp);
+                path.emplace(temp.travelTime, next);
+            }
+        }
+    }
+    //If not found
+    vector<unsigned> failure;
+    return failure;
+}
+
+
+

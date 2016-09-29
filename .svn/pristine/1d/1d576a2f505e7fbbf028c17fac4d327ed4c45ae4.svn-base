@@ -1,0 +1,26 @@
+#include "StreetsDatabaseAPI.h"
+#include "m1.h"
+#include "m2.h"
+#include "m3.h"
+
+using namespace std;
+
+int main() {
+//Load map. If unsuccessful, ask user to reinput
+    while(!cin.eof()){
+        if(loadMap())
+      /*  {
+            vector<unsigned> temp = find_path_between_intersections(7049,8049);
+        for(int i =0; i < temp.size();i++){
+            cout<<temp[i]<<endl;
+        }
+        }*/
+           draw_map();    
+        close_map();
+    }
+    
+    
+    // try out your m1.h functions here
+
+    return 0;
+}
